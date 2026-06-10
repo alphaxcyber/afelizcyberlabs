@@ -1,0 +1,13 @@
+baseURL: https://afelizcyberlabs.com/
+title: AfelizCyberLabs
+theme: relearn
+
+languages:
+  en:
+    label: English
+    weight: 1
+
+params:
+  author:
+    name: alphaxcyber
+  themeVariant: relearn-dark
