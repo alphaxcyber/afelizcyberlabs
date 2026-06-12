@@ -1,6 +1,6 @@
 ---
 title: Homelab Build Series
-weight: 1
+weight: 2
 ---
 
 # Homelab Build Series 🖥️
