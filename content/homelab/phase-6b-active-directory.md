@@ -1,350 +1,251 @@
-\---
+---
 
 title: Phase 6b - Active Directory Setup
 weight: 8
+draft: false
+
 ---
 
-# Phase 6b — Active Directory Setup 🛡️
+# Phase 6b - Active Directory Setup 🏛️
 
-**Date:** June 10, 2026
-**Lab Environment:** HP Z440 · Proxmox VE 8.4 · OPNsense · Windows Server 2022
+With Windows Server 2022 installed and running as ALPHA-DC01, this phase covers promoting it to a Domain Controller, building the full Active Directory structure for alphalab.local, and creating the users, groups, and Group Policy Objects that form the foundation of the lab environment.
 
-\---
-
-## Overview
-
-With OPNsense running as my lab firewall, Ubuntu Server and Kali Linux already on the network, the next major milestone for AlphaLab was promoting Windows Server 2022 to a Domain Controller and standing up a full Active Directory environment. This post covers everything from renaming the server to building out Organizational Units, users, groups, and Group Policy Objects — and the one naming mistake I caught just in time.
-
-By the end of this session, AlphaLab had a fully functional Active Directory domain: alphalab.local.
-
-\---
+---
 
 ## Why Active Directory Matters for Cybersecurity
 
-Before getting into the steps, it is worth understanding why building AD from scratch is one of the most valuable things you can do in a cybersecurity homelab.
+Active Directory is the identity and access management backbone of virtually every enterprise Windows environment. Understanding AD is non-negotiable for both SOC analysts and penetration testers.
 
-Almost every enterprise environment in the world runs Active Directory. As a SOC Analyst you will be investigating AD logs constantly — failed logins, privilege escalation attempts, and lateral movement between machines. As a penetration tester, AD is almost always the primary target. Tools like BloodHound, Mimikatz, and Impacket exist almost entirely to attack AD environments.
+From a blue team perspective, AD generates the security logs that SOC analysts live in -- Event ID 4624 (successful logon), 4625 (failed logon), 4768 (Kerberos ticket request), and 4769 (service ticket request) are the signals used to detect credential attacks and lateral movement.
 
-You cannot work in enterprise cybersecurity without understanding AD deeply. Building it yourself from the inside out is far more valuable than just reading about it.
+From a red team perspective, AD is the primary attack target. The goal of most penetration tests against Windows environments is domain compromise -- obtaining Domain Admin credentials or a Kerberos ticket that grants full control over every machine in the domain.
 
-\---
+Building and administering AD in this lab is the prerequisite for everything that comes after: BloodHound enumeration, Kerberoasting, Pass-the-Hash, and the detection exercises using Wazuh.
 
-## Starting Point
+---
 
-Going into this session, VM 103 was running Windows Server 2022 Standard Evaluation at 172.16.0.30 on the lab network. RDP was working from my main workstation (XFlow) via OPNsense, VirtIO drivers were installed, and a clean snapshot (fresh-install-rdp-working) was in place.
+## Step 1 - Server Rename
 
-One thing still needed: the server had a default random hostname assigned during installation. Before touching Active Directory, that had to be fixed.
+Windows Server VMs ship with random generated hostnames. Before promoting to a DC, the server was renamed to follow the lab naming convention.
 
-\---
-
-## Step 1 — Renaming the Server
-
-Hostname naming conventions matter in enterprise environments. The standard pattern is a role abbreviation plus a number:
-
-* DC01, DC02 — Domain Controllers
-* FS01 — File Servers
-* WEB01 — Web Servers
-
-For AlphaLab, I went with ALPHA-DC01 to keep it consistent with the lab naming theme.
+In enterprise environments, server names follow strict patterns. DC = Domain Controller, FS = File Server, WEB = Web Server, followed by a zero-padded instance number. The ALPHA prefix ties everything back to the AlphaLab brand.
 
 &#x20;   Rename-Computer -NewName "ALPHA-DC01" -Restart
 
 
-After the reboot, verify it took:
 
-&#x20;   hostname
+Important: the hostname must be set before AD promotion. After promotion, the hostname is baked into the AD database and changing it requires a complex netdom rename process that can break domain trust relationships.
 
+---
 
-**Important:** This has to be done before AD promotion. Once a server is a Domain Controller, the hostname becomes baked into the AD database and renaming it requires a multi-step netdom process. Renaming before promotion keeps things clean.
+## The O vs Zero Typo - Snapshot Rollback
 
-\---
+After the first promotion attempt, verification revealed the hostname had been saved as ALPHA-DCO1 (letter O) rather than ALPHA-DC01 (zero). A single character typo with significant consequences in a production environment.
 
-## The Mistake I Caught Just in Time
+Since the DC was brand new with nothing built on it, the cleanest fix was:
 
-After the first promotion attempt, running Get-ADDomainController showed ALPHA-DCO1 in the output — with the letter O instead of a zero. A subtle but permanent mistake inside AD.
+* Roll back to the pre-promotion Proxmox snapshot named fresh-install-rdp-working
+* Rename correctly to ALPHA-DC01 with a zero
+* Redo the AD DS installation and promotion from scratch
 
-Since the DC was brand new with nothing built on it yet, the cleanest fix was to roll back to the pre-promotion snapshot in Proxmox, rename the computer correctly, and redo the promotion. This took about 10 minutes and avoided any risk of a botched DC rename leaving AD in an inconsistent state.
+This was the first real hands-on use of Proxmox snapshot rollback. The rollback completed in seconds and the VM was back to a clean state immediately. It reinforced the value of snapshotting before every significant change, which is now a standing discipline in the lab.
 
-**Lesson:** Always double-check O vs 0 when naming servers. And always take snapshots before major changes — they are what made this a 10-minute fix instead of a major problem.
+---
 
-\---
+## Step 2 - AD DS Role Installation
 
-## Step 2 — Installing the AD DS Role
-
-With the correct hostname confirmed, install the Active Directory Domain Services role:
+Active Directory Domain Services is a Windows Server role, not something built into the OS by default. The role was installed with its management tools:
 
 &#x20;   Install-WindowsFeature -Name AD-Domain-Services -IncludeManagementTools
 
 
-The -IncludeManagementTools flag installs the GUI tools and PowerShell modules alongside the role itself. When it finishes you should see Success: True and Restart Needed: No.
 
-\---
+Result: Success: True, Restart Needed: No
 
-## Step 3 — Promoting to Domain Controller
+This installs the AD DS binaries and the management tools including Active Directory Users and Computers, Active Directory Sites and Services, and Group Policy Management Console. The server is not yet a DC at this point -- that happens in the next step.
 
-This is the command that transforms a regular Windows Server into a Domain Controller and creates a brand new Active Directory forest:
+---
 
-&#x20;   Install-ADDSForest `
-      -DomainName "alphalab.local" `
-      -DomainNetbiosName "ALPHALAB" `
-      -ForestMode "WinThreshold" `
-      -DomainMode "WinThreshold" `
-      -InstallDns:$true `
-      -Force:$true
+## Step 3 - Domain Controller Promotion
+
+With the role installed, the server was promoted to a DC and the alphalab.local forest was created:
+
+&#x20;   Install-ADDSForest `-DomainName "alphalab.local"`
+-DomainNetbiosName "ALPHALAB" `-ForestMode "WinThreshold"`
+-DomainMode "WinThreshold" `-InstallDns:$true`
+-Force:$true
 
 
-What each parameter does:
 
-* \-DomainName "alphalab.local" — The fully qualified domain name. .local means private, internal only
-* \-DomainNetbiosName "ALPHALAB" — The short legacy name used for ALPHALAB\\username style logins
-* \-ForestMode "WinThreshold" — Windows Server 2016 functional level, highest compatible with 2022
-* \-InstallDns:$true — Installs DNS server automatically, required since AD depends entirely on DNS
-* \-Force:$true — Suppresses confirmation prompts
+* DSRM password set and stored securely offline
+* Server rebooted automatically after promotion
+* First boot displayed "Please wait for the Group Policy Client" -- normal behavior on first DC boot
+* Login screen changed to ALPHALAB\\Administrator confirming AD was running
 
-You will be prompted for a DSRM password (Directory Services Restore Mode). This is an emergency recovery password used only if AD itself becomes corrupted. It is separate from your Administrator password. Write it down and store it somewhere safe.
+Two warnings appeared during promotion, both expected:
 
-The server will reboot automatically when promotion completes.
+* DNS delegation warning: alphalab.local is a private domain with no parent zone, so no delegation is possible. Normal for lab environments.
+* NT 4.0 cryptography warning: Server 2022 blocks weak encryption algorithms by default. This is a security feature, not a problem.
 
-### What Those Warnings Mean
+---
 
-During promotion you will see two warnings that look alarming but are completely normal:
+## Step 4 - Domain Verification
 
-**DNS delegation warning:** alphalab.local is a private domain that does not exist on the public internet, so there is no parent DNS zone to delegate from. In a private homelab this is expected — ignore it.
-
-**NT 4.0 cryptography warning:** Windows Server 2022 blocks old weak encryption algorithms by default. This is actually a good thing — your DC is more secure out of the box.
-
-### First Boot After Promotion
-
-The first login after promotion will show a "Please wait for the Group Policy Client" screen. Do not touch it. The server is doing significant first-time domain setup work behind the scenes — building the AD database, initializing SYSVOL, registering DNS records. On a VM this takes 2-5 minutes and resolves on its own.
-
-When the login screen appears, you will notice it now shows ALPHALAB\\Administrator instead of just Administrator. That is your first visual confirmation that Active Directory is running.
-
-\---
-
-## Step 4 — Verifying the Domain
-
-Three commands confirm everything came up healthy:
+Three verification commands confirmed the domain was healthy:
 
 &#x20;   Get-ADDomain
-    Get-ADForest
-    Get-ADDomainController
+Get-ADForest
+Get-ADDomainController
 
 
-Key things to verify in the output:
+
+Key values confirmed:
 
 * DNSRoot: alphalab.local
 * NetBIOSName: ALPHALAB
-* HostName: ALPHA-DC01.alphalab.local (zero, not letter O)
+* HostName: ALPHA-DC01.alphalab.local (zero confirmed, not letter O)
 * IPv4Address: 172.16.0.30
 * IsGlobalCatalog: True
-* OperationMasterRoles: SchemaMaster, DomainNamingMaster, PDCEmulator, RIDMaster
+* OperationMasterRoles: SchemaMaster, DomainNamingMaster, PDCEmulator, RIDMaster, InfrastructureMaster
 
-### FSMO Roles
+All five FSMO roles on a single DC is correct for a single-DC lab environment. In production, these roles would typically be distributed across multiple DCs for redundancy. The PDCEmulator is the highest-value FSMO role from an attacker's perspective -- it handles password changes and account lockouts domain-wide.
 
-FSMO stands for Flexible Single Master Operations. These are five special roles that only one DC can hold at a time, handling operations that cannot be performed simultaneously on multiple servers:
+---
 
-* SchemaMaster — Controls changes to the AD schema
-* DomainNamingMaster — Controls adding and removing domains from the forest
-* PDCEmulator — Handles password changes, time sync, and Group Policy
-* RIDMaster — Issues blocks of security IDs for new objects
-* InfrastructureMaster — Tracks object references across domains
+## Step 5 - OU Structure
 
-In a single-DC lab, ALPHA-DC01 holds all five — which is correct. In large enterprises these are sometimes spread across multiple DCs for redundancy. The PDCEmulator is especially valuable to attackers; compromising it gives enormous power over the domain.
+With AD running, the Organizational Unit hierarchy was built. OUs are containers that organize objects in AD and, more importantly, determine which Group Policy Objects apply to which machines and users.
 
-\---
-
-## Step 5 — Running Windows Update
-
-Before building anything in AD, take a snapshot and run Windows Update. The order matters:
-
-&#x20;   Verify working state → Snapshot → Apply updates → Verify again → Snapshot
+&#x20;   New-ADOrganizationalUnit -Name "AlphaLab" -Path "DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Users" -Path "OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Computers" -Path "OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Groups" -Path "OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Admins" -Path "OU=Users,OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Standard" -Path "OU=Users,OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Workstations" -Path "OU=Computers,OU=AlphaLab,DC=alphalab,DC=local"
+New-ADOrganizationalUnit -Name "Servers" -Path "OU=Computers,OU=AlphaLab,DC=alphalab,DC=local"
 
 
-This is a habit worth building. Updates can occasionally break things, and a snapshot means any problem is a 30-second rollback rather than a rebuild.
 
-After the update reboot, verify the four critical AD services are still running:
-
-&#x20;   Get-Service adws, kdc, netlogon, dns
-
-
-* adws — Active Directory Web Services, enables PowerShell AD commands
-* kdc — Kerberos Distribution Center, the authentication engine of AD
-* netlogon — Handles domain join requests and DC location
-* dns — DNS Server, AD is completely dependent on this
-
-\---
-
-## Step 6 — Building the OU Structure
-
-With the domain healthy and updated, it is time to build the skeleton of the directory. Organizational Units (OUs) are the folder structure that organizes everything in AD.
-
-**Key concept:** OUs are for organization. Groups are for permissions. Location in an OU does not grant access — group membership does.
-
-The structure built for AlphaLab mirrors a real small enterprise:
+Final structure:
 
 &#x20;   alphalab.local
-    └── AlphaLab
-          ├── Users
-          │     ├── Admins
-          │     └── Standard
-          ├── Computers
-          │     ├── Workstations
-          │     └── Servers
-          └── Groups
-
-    New-ADOrganizationalUnit -Name "AlphaLab" -Path "DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Users" -Path "OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Computers" -Path "OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Groups" -Path "OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Admins" -Path "OU=Users,OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Standard" -Path "OU=Users,OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Workstations" -Path "OU=Computers,OU=AlphaLab,DC=alphalab,DC=local"
-    New-ADOrganizationalUnit -Name "Servers" -Path "OU=Computers,OU=AlphaLab,DC=alphalab,DC=local"
+└── AlphaLab
+├── Users
+│     ├── Admins
+│     └── Standard
+├── Computers
+│     ├── Workstations
+│     └── Servers
+└── Groups
 
 
-\---
 
-## Step 7 — Creating Users
+The separation between Admins and Standard users is the Principle of Least Privilege in practice. Admin accounts get elevated permissions. Standard users get only what they need for day-to-day work. Service accounts go in Standard because they should never have admin rights unless absolutely required.
 
-A realistic lab environment needs different account types:
+---
 
-&#x20;   New-ADUser -Name "Alex Feliz" -SamAccountName "afeliz" -UserPrincipalName "afeliz@alphalab.local" -Path "OU=Admins,OU=Users,OU=AlphaLab,DC=alphalab,DC=local" -AccountPassword (ConvertTo-SecureString "Lab@dmin123!" -AsPlainText -Force) -Enabled $true
+## Step 6 - Users Created
 
-    New-ADUser -Name "John Smith" -SamAccountName "jsmith" -UserPrincipalName "jsmith@alphalab.local" -Path "OU=Standard,OU=Users,OU=AlphaLab,DC=alphalab,DC=local" -AccountPassword (ConvertTo-SecureString "User@pass123!" -AsPlainText -Force) -Enabled $true
+Four domain accounts were created:
 
-    New-ADUser -Name "Maria Garcia" -SamAccountName "mgarcia" -UserPrincipalName "mgarcia@alphalab.local" -Path "OU=Standard,OU=Users,OU=AlphaLab,DC=alphalab,DC=local" -AccountPassword (ConvertTo-SecureString "User@pass123!" -AsPlainText -Force) -Enabled $true
+|Name|Username|Type|OU|
+|-|-|-|-|
+|Alex Feliz|afeliz|Admin|Admins|
+|John Smith|jsmith|Standard User|Standard|
+|Maria Garcia|mgarcia|Standard User|Standard|
+|SVC Backup|svc\_backup|Service Account|Standard|
 
-    New-ADUser -Name "SVC Backup" -SamAccountName "svc\_backup" -UserPrincipalName "svc\_backup@alphalab.local" -Path "OU=Standard,OU=Users,OU=AlphaLab,DC=alphalab,DC=local" -AccountPassword (ConvertTo-SecureString "Backup@svc123!" -AsPlainText -Force) -Enabled $true
-
-
-**Why a service account?** Service accounts are used by applications and automated processes rather than humans. In real environments they frequently have weak passwords that never expire — making them a prime target for privilege escalation. The common attack chain:
-
-&#x20;   Compromise standard user
-        ↓
-    Find misconfigured service account
-        ↓
-    Escalate privileges
-        ↓
-    Reach Domain Admin
-        ↓
-    Own the domain
-
-
-\---
-
-## Step 8 — Adding afeliz to Domain Admins
-
-Having a user in the Admins OU does not grant admin rights. What grants elevated privileges is group membership:
+afeliz was added to Domain Admins:
 
 &#x20;   Add-ADGroupMember -Identity "Domain Admins" -Members "afeliz"
 
 
-Domain Admins members have full administrative control over every machine in the domain. In real environments, membership is strictly controlled, heavily audited, and a primary target for attackers.
 
-\---
+The service account svc\_backup represents a common real-world pattern -- automated backup software runs as a service account with read access to file shares. Service accounts are a primary attack target because they often have elevated privileges, rarely change their passwords, and are easy to Kerberoast.
 
-## Step 9 — Creating Security Groups
+---
 
-&#x20;   New-ADGroup -Name "IT Admins" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local" -Description "IT Administrative Staff"
+## Step 7 - Security Groups
 
-    New-ADGroup -Name "SOC Analysts" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local" -Description "Security Operations Center Analysts"
+Three security groups were created in the Groups OU:
 
-    New-ADGroup -Name "Standard Users" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local" -Description "Standard domain users"
-
-    Add-ADGroupMember -Identity "IT Admins" -Members "afeliz"
-    Add-ADGroupMember -Identity "SOC Analysts" -Members "afeliz"
-    Add-ADGroupMember -Identity "Standard Users" -Members "jsmith", "mgarcia", "svc\_backup"
+&#x20;   New-ADGroup -Name "IT Admins" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local"
+New-ADGroup -Name "SOC Analysts" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local"
+New-ADGroup -Name "Standard Users" -GroupScope Global -GroupCategory Security -Path "OU=Groups,OU=AlphaLab,DC=alphalab,DC=local"
 
 
-afeliz gets both IT Admins and SOC Analysts. Standard users get Standard Users only — Principle of Least Privilege in action.
 
-\---
+The correct approach is Role Based Access Control: assign permissions to groups, then add users to groups. Never assign permissions directly to individual user accounts. This way, when someone joins or leaves a team, you change their group membership rather than hunting down every permission they were individually granted.
 
-## Step 10 — Group Policy Objects
+---
 
-Group Policy pushes security settings down to users and computers automatically. Three GPOs were created for AlphaLab:
+## Step 8 - Group Policy Objects
 
-### Password Policy
+Three GPOs were created and linked to the domain root:
 
-&#x20;   New-GPO -Name "AlphaLab Password Policy" -Comment "Domain-wide password security policy"
-    New-GPLink -Name "AlphaLab Password Policy" -Target "DC=alphalab,DC=local" -Enforced Yes
+**AlphaLab Password Policy**
 
+* 12-character minimum password length
+* Enforced: True
 
-Enforces a 12-character minimum. NIST guidelines recommend 12-16 characters as the enterprise minimum — length matters more than complexity for resisting brute force.
+**AlphaLab Account Lockout Policy**
 
-### Account Lockout Policy
+* Account lockout after 5 failed attempts
+* Enforced: True
+* Note: setting this too aggressively (1 or 2 attempts) enables a denial-of-service attack where an attacker intentionally locks out accounts across the domain
 
-&#x20;   New-GPO -Name "AlphaLab Account Lockout Policy" -Comment "Brute force protection"
-    New-GPLink -Name "AlphaLab Account Lockout Policy" -Target "DC=alphalab,DC=local" -Enforced Yes
+**AlphaLab Security Audit Policy**
 
+* Audit value 3 = log both success and failure events for logon events and account management
+* Enforced: True
+* This is the foundation for Wazuh SIEM integration -- without audit policy enabled, attacks happen in complete silence
 
-Locks accounts after 5 failed attempts — stopping automated brute force tools cold.
+Final GPO processing order at domain root:
 
-### Security Audit Policy
-
-&#x20;   New-GPO -Name "AlphaLab Security Audit Policy" -Comment "Enable security event logging for SOC monitoring"
-    New-GPLink -Name "AlphaLab Security Audit Policy" -Target "DC=alphalab,DC=local" -Enforced Yes
-
-
-Without audit policy, attacks happen in silence. With it enabled, every login attempt and account change gets written to the Security Event Log — the foundation of SOC monitoring.
-
-Windows Event IDs every SOC analyst should know:
-
-* 4624 — Successful logon
-* 4625 — Failed logon, brute force shows up here
-* 4648 — Logon with explicit credentials, Pass-the-Hash indicator
-* 4720 — User account created
-* 4732 — User added to privileged group
-* 4768 — Kerberos TGT requested
-* 4769 — Kerberos service ticket requested
-* 4771 — Kerberos pre-authentication failed
-
-### Final GPO State
-
-&#x20;   Order 1: Default Domain Policy      (built-in, Enforced: False)
-    Order 2: AlphaLab Password Policy   (Enforced: True)
-    Order 3: AlphaLab Account Lockout   (Enforced: True)
-    Order 4: AlphaLab Security Audit    (Enforced: True)
+&#x20;   Order 1: Default Domain Policy       (built-in)
+Order 2: AlphaLab Password Policy    (Enforced)
+Order 3: AlphaLab Account Lockout    (Enforced)
+Order 4: AlphaLab Security Audit     (Enforced)
 
 
-\---
 
-## How It All Connects
+Key Windows Event IDs generated by the audit policy that SOC analysts watch:
 
-&#x20;   User logs in
-        ↓
-    Kerberos (KDC) validates credentials
-        ↓
-    Group membership checked — determines what they can access
-        ↓
-    GPOs applied — enforce security settings on their session
-        ↓
-    Audit policy logs the event — written to Security Event Log
-        ↓
-    Future: Wazuh SIEM collects that log — generates alerts
+|Event ID|Meaning|
+|-|-|
+|4624|Successful logon|
+|4625|Failed logon|
+|4648|Logon using explicit credentials|
+|4720|User account created|
+|4732|User added to security group|
+|4768|Kerberos ticket request (TGT)|
+|4769|Kerberos service ticket request|
+|4771|Kerberos pre-authentication failed|
 
+---
 
-Every component of that chain is now in place in AlphaLab.
+## Snapshots Taken
 
-\---
+|Name|Description|
+|-|-|
+|dc-promoted-clean|ALPHA-DC01 promoted, AD DS and DNS green, pre-Windows Update|
+|dc-post-update-clean|Post-update, all AD services healthy, ready for OU and user build|
 
-## Snapshots Taken This Session
+---
 
-* dc-promoted-clean — ALPHA-DC01 promoted, AD DS and DNS green, pre-update
-* dc-post-update-clean — Post Windows Update, all services healthy, ready for OU and user build
+## Current Lab State
 
-\---
+|VM|Hostname|IP|Role|
+|-|-|-|-|
+|VM 100|OPNsense|172.16.0.1|Firewall and gateway|
+|VM 101|Ubuntu Server|172.16.0.10|Linux server|
+|VM 102|Kali Linux|172.16.0.20|Attack workstation|
+|VM 103|ALPHA-DC01|172.16.0.30|Domain Controller|
 
-## What's Next
+---
 
-* Join Kali Linux and Ubuntu Server to the alphalab.local domain
-* Configure fine-grained password policies for service accounts
-* Deploy Wazuh SIEM to start collecting audit logs
-* Begin Active Directory attack and defense exercises — BloodHound enumeration, privilege escalation paths, and detection
+## What Is Next
 
-The lab is starting to look like a real enterprise environment.
-
-\---
-
-AlphaLab is a cybersecurity homelab build series documenting the journey toward a career in cybersecurity. Follow along at afelizcyberlabs.com.
+With the domain built and all policies in place, the next step is joining the Linux VMs to alphalab.local. Both Ubuntu Server and Kali Linux will be domain members, which is what enables domain-authenticated attacks using tools like BloodHound and Impacket in later phases.
 
