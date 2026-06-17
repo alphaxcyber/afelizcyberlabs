@@ -113,11 +113,11 @@ but hindsight is always 20/20.
 
 ![NVMe SSDs installed in the Z Turbo Quad Pro adapter](Z4408TurboZQuadSSDsInstalled.jpg)
 
-![HP Z Turbo Quad Pro adapter installed in the chassis](Z4409TurboZQuadInstalled.jpg)
-
 ![Third SSD added during storage upgrade](Z44013QuadDrive3rdSSDInstalled.jpg)
 
 ![All SSDs installed angle B](Z44014QuadDriveSSDsInstalledAngleB.jpg)
+
+![HP Z Turbo Quad Pro adapter installed in the chassis](Z4409TurboZQuadInstalled.jpg)
 
 ---
 
@@ -135,8 +135,6 @@ The card installed successfully and functioned correctly but it was simply too p
 large for this build. With the HP Z Turbo Quad Pro SSD adapter occupying the adjacent PCIe
 slot, the 1070 Ti's triple-fan shroud left almost no clearance. Thermals and airflow would
 have been a long-term concern.
-
-![6-pin to 8-pin GPU power adapter cable](Z44010GPUPowerAdapter.jpg)
 
 ![ASUS ROG Strix GTX 1070 Ti installed](Z4405ASUSGPUInstalled.jpg)
 
@@ -157,6 +155,8 @@ The RX 6600 XT is currently reserved for future AI and machine learning workload
 lab evolves toward the AI specialization track.
 
 ![ASRock Challenger D RX 6600 XT in box](Z4406ASRockGPUInBox.jpg)
+
+![6-pin to 8-pin GPU power adapter cable](Z44010GPUPowerAdapter.jpg)
 
 ![GPU and Z Turbo Quad Pro installed together](Z44011GPUQuadDriveInstalled.jpg)
 
