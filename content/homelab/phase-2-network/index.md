@@ -5,6 +5,8 @@ weight: 3
 
 # Phase 2 — Network Configuration 🌐
 
+![Ethernet switch with cables](ethernetswitch1.jpg)
+
 ## Physical Network Layout
 
 | Device | Role | IP |

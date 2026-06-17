@@ -5,6 +5,8 @@ weight: 2
 
 # Homelab Build Series 🖥️
 
+![A teal-lit data center server corridor](datacenterserverroom.jpg)
+
 Complete build documentation of my Proxmox-based cybersecurity home lab — built from scratch on enterprise hardware, documented step by step.
 
 ## Hardware
