@@ -186,3 +186,16 @@ The attack and defense phases planned after the security stack:
 - Phase 8: External recon and initial access using a non-domain-joined Kali VM attacking the perimeter
 - Phase 9: Internal recon and lateral movement using BloodHound, Kerberoasting, and Pass-the-Hash from within the domain
 - Phase 10: Detection and response using Wazuh to catch and alert on the attacks from Phases 8 and 9
+
+## What I Learned
+
+- DNS is the foundation of Active Directory -- every domain-joined machine must use the DC as its primary DNS server or nothing works
+- The 15-character NetBIOS name limit for computer accounts -- naming conventions must account for this from the start
+- Linux silence is success -- commands like realm leave and realm join produce no output when they complete cleanly
+- Computer objects always land in CN=Computers by default when joining a domain -- moving them to the correct OU is a manual step
+- Why OU placement matters -- GPOs linked to OU=Servers only apply to machines that actually live in that OU
+- Kali Linux repos are security-tool focused and do not ship standard system integration packages like sssd and sssd-tools
+- adcli can join a machine to an AD domain without the full sssd stack -- a useful workaround for Kali specifically
+- The Kerberos keytab file at /etc/krb5.keytab stores machine credentials for authenticating to the domain
+- Always check the shell prompt before running commands -- running a command on the wrong machine is a real risk when managing multiple SSH sessions
+- Domain-joined Kali enables authenticated AD attacks that behave differently and more powerfully than unauthenticated ones
